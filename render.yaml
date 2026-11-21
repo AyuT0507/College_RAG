@@ -1,0 +1,20 @@
+services:
+  - type: web
+    name: college-rag-assistant
+    runtime: docker
+    plan: free
+    region: oregon
+    healthCheckPath: /health
+    disk:
+      name: rag-data
+      mountPath: /app/data
+      sizeGB: 1
+    envVars:
+      - key: SECRET_KEY
+        generateValue: true
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: TOKEN_ENCRYPTION_KEY
+        generateValue: true
+      - key: WEBSITE_ALLOWED_DOMAINS
+        value: "example.edu"

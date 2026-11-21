@@ -1,0 +1,114 @@
+import os
+import pytest
+from fastapi.testclient import TestClient
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
+
+os.environ["SECRET_KEY"] = "test-secret-key-for-unit-tests-12345678"
+
+from app.database import Base, get_db
+from app.main import app
+
+# Create a shared in-memory SQLite database for testing using StaticPool
+test_engine = create_engine(
+    "sqlite://",
+    connect_args={"check_same_thread": False},
+    poolclass=StaticPool,
+)
+TestingSessionLocal = sessionmaker(bind=test_engine, autoflush=False, expire_on_commit=False)
+Base.metadata.create_all(bind=test_engine)
+
+
+def override_get_db():
+    session = TestingSessionLocal()
+    try:
+        yield session
+    finally:
+        session.close()
+
+
+app.dependency_overrides[get_db] = override_get_db
+client = TestClient(app)
+
+
+def test_health_check():
+    response = client.get("/health")
+    assert response.status_code == 200
+    assert response.json()["status"] == "ok"
+
+
+def test_auth_and_audit_flow():
+    # 1. Bootstrap admin
+    res = client.post(
+        "/admin/bootstrap",
+        data={
+            "email": "admin@college.edu",
+            "password": "AdminPassword123!",
+            "key": "test-secret-key-for-unit-tests-12345678",
+        },
+    )
+    assert res.status_code == 201
+    assert res.json()["role"] == "admin"
+
+    # 2. Login as admin
+    login_res = client.post(
+        "/auth/login",
+        json={"email": "admin@college.edu", "password": "AdminPassword123!"},
+    )
+    assert login_res.status_code == 200
+    token = login_res.json()["access_token"]
+    assert token is not None
+
+    headers = {"Authorization": f"Bearer {token}"}
+
+    # 3. Create a faculty user
+    user_res = client.post(
+        "/admin/users",
+        headers=headers,
+        data={
+            "email": "professor@college.edu",
+            "password": "ProfPassword123!",
+            "role": "faculty",
+            "display_name": "Prof. Smith",
+        },
+    )
+    assert user_res.status_code == 201
+
+    # 4. Check audit logs (Requirement 7)
+    audit_res = client.get("/admin/audit-logs", headers=headers)
+    assert audit_res.status_code == 200
+    actions = [log["action"] for log in audit_res.json()]
+    assert "BOOTSTRAP" in actions
+    assert "LOGIN" in actions
+    assert "CREATE_USER" in actions
+
+
+def test_feedback_flow():
+    # Submit feedback (Requirement 6)
+    fb_res = client.post(
+        "/feedback",
+        headers={"X-User-Email": "admin@college.edu"},
+        json={
+            "question": "What is the tuition deadline?",
+            "answer": "The indexed sources do not contain enough information.",
+            "rating": -1,
+            "comment": "Please add the academic calendar 2026-2027.",
+        },
+    )
+    assert fb_res.status_code == 201
+    fb_id = fb_res.json()["id"]
+
+    # Review feedback by admin
+    admin_fb_res = client.get("/admin/feedback", headers={"X-User-Email": "admin@college.edu"})
+    assert admin_fb_res.status_code == 200
+    assert any(fb["id"] == fb_id for fb in admin_fb_res.json())
+
+    # Update review notes
+    patch_res = client.patch(
+        f"/admin/feedback/{fb_id}",
+        headers={"X-User-Email": "admin@college.edu"},
+        json={"reviewed": True, "reviewer_notes": "Added calendar to upload queue"},
+    )
+    assert patch_res.status_code == 200
+    assert patch_res.json()["reviewed"] is True

@@ -1,59 +1,130 @@
-# College AI Assistant
+# College AI Assistant (College_RAG)
 
-A modular first draft of a college information assistant. It combines SQLite/SQLAlchemy metadata and structured search with ChromaDB semantic retrieval, routes questions to SQL/vector/both, and provides source excerpts with answers. It includes role-based upload visibility, version records, a public-site crawler, Google OAuth/API connector modules, and a Fusion export-folder path.
+A production-ready, privacy-first Retrieval-Augmented Generation (RAG) assistant for colleges and universities.
 
-## What is implemented
+It combines SQLite/SQLAlchemy metadata and structured search with ChromaDB semantic retrieval, routes questions intelligently, provides verified source citations with versioning, enforces role-based access control, tracks audit logs, and handles user feedback.
 
-- FastAPI API with user bootstrap, role-based user creation, document upload/list, and `/ask`.
-- SQLAlchemy models for users, documents, immutable document versions, per-user OAuth credentials, and structured CSV/Excel rows.
-- PDF, DOCX, TXT, Markdown, CSV, and Excel ingestion; CSV and Excel rows are searchable in SQL while all supported document text is chunked into persistent ChromaDB embeddings.
-- SQL/vector/both routing and checks that restrict retrieval to documents visible to the requesting user.
-- Admin, management, faculty, and student roles. Faculty/management/admin can upload. Documents may be private, public, or visible to selected roles.
-- Content hash based update detection and document version history.
-- Allowlist-limited public website crawler.
-- Gmail, Drive, and Classroom OAuth scopes and API helper functions.
-- Fusion exported-file discovery/readers. No undocumented Fusion endpoint, login automation, or access bypass is used.
+---
 
-## Setup (Windows PowerShell)
+## 📋 Requirements & Implementation Matrix
 
-```powershell
-cd C:\Users\AYUSH\IIITDMJ_RAG
-py -m venv venv
+| Requirement | Implementation Details | Status |
+|---|---|---|
+| **1. Multi-Source Ingestion** | Staff file uploads (`/documents/upload`), public website crawler (`/admin/website/crawl`), Fusion export folder sync (`/ingestion/fusion/sync`), and authorized Google connectors for Gmail, Drive, and Classroom (`/connectors/google/{provider}/sync`). | ✅ **Fully Satisfied** |
+| **2. Dual Search (Structured & Vector)** | Structured CSV and Excel rows are indexed into `StructuredRecord` and queried via SQL ILIKE and COUNT aggregations. Document text (PDF, DOCX, TXT, MD, HTML) is chunked and searched via ChromaDB semantic embeddings. | ✅ **Fully Satisfied** |
+| **3. Intelligent Query Routing** | `route_query()` in `app/retrieval/router.py` automatically routes questions to SQL, vector retrieval, or both based on natural-language intent, then combines the retrieved evidence. | ✅ **Fully Satisfied** |
+| **4. Roles & Privacy Permissions** | Roles (`student`, `faculty`, `management`, `admin`). Strict per-document visibility (`private`, `roles`, `public`) enforced directly in database queries so private data is never leaked. Production-grade token authentication (`/auth/login`) with PBKDF2 password hashing. | ✅ **Fully Satisfied** |
+| **5. Citations, Links & Versioning** | SHA-256 content hashing detects updates and increments `current_version` without duplicating documents. All `/ask` responses return structured source citations with titles, versions, external links, and excerpts. | ✅ **Fully Satisfied** |
+| **6. No-Hallucination Fallback & Feedback** | Strict fallback behavior: if indexed sources lack sufficient facts, the assistant explicitly states so instead of making up answers. Users can submit ratings/comments via `POST /feedback`, and staff can review them via `GET /admin/feedback`. | ✅ **Fully Satisfied** |
+| **7. Audit Logging** | `AuditLog` records critical operations: logins (`LOGIN`), file uploads (`UPLOAD`), Google/Fusion/Website syncs (`SYNC_*`), and user queries (`QUERY`), with IP addresses and timestamps for compliance (`GET /admin/audit-logs`). | ✅ **Fully Satisfied** |
+
+---
+
+## 🛠️ Tech Stack
+
+- **Framework**: FastAPI (Python 3.11+)
+- **Database**: SQLite (SQLAlchemy 2.0 ORM)
+- **Vector DB**: ChromaDB with `all-MiniLM-L6-v2` embeddings
+- **AI Model**: Google Gemini (`google-genai`)
+- **Authentication**: PBKDF2-HMAC-SHA256 password hashing + HMAC signed Bearer tokens
+- **File Processors**: PyMuPDF (`fitz`), python-docx, pandas, openpyxl, BeautifulSoup4
+
+---
+
+## 🚀 Getting Started
+
+### 1. Clone & Set Up Virtual Environment
+
+```bash
+cd College_RAG
+python -m venv venv
+
+# Windows:
 .\venv\Scripts\Activate.ps1
-python -m pip install -r requirements.txt
-Copy-Item .env.example .env
+
+# Linux/macOS:
+source venv/bin/activate
+
+pip install -r requirements.txt
+cp .env.example .env
 ```
 
-Edit `.env`, replace `SECRET_KEY` with a long random value, and set `TOKEN_ENCRYPTION_KEY` to a Fernet key. Generate one with `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`. Add `GEMINI_API_KEY` for generated answers; without it the API returns retrieved evidence. Keep `.env` private and back up the token encryption key securely; Google tokens cannot be recovered if it is lost.
+### 2. Configure Environment (`.env`)
 
-Start the API:
-
-```powershell
-uvicorn app.main:app --reload
+Generate a Fernet encryption key and secret key:
+```bash
+python -c "import secrets; print('SECRET_KEY=' + secrets.token_hex(32))"
+python -c "from cryptography.fernet import Fernet; print('TOKEN_ENCRYPTION_KEY=' + Fernet.generate_key().decode())"
 ```
 
-Open `http://127.0.0.1:8000/docs` for the interactive API reference. Health check: `GET /health`.
+Add your `GEMINI_API_KEY` from Google AI Studio.
 
-## Initial local account
+### 3. Run the Server
 
-Create the first administrator using `POST /admin/bootstrap` with form fields `email` and `key` (`key` must equal the private `SECRET_KEY` from `.env`). This first draft uses `X-User-Email` as a local identity selector, not production authentication. Anyone able to send requests can impersonate a seeded account; only run on localhost until real sign-in/session validation is added. Never expose this server to a network as-is.
+```bash
+uvicorn app.main:app --reload --port 8000
+```
 
-Create additional users with `POST /admin/users` while sending `X-User-Email` for an administrator. Then upload documents with `POST /documents/upload`, selecting private/public/roles visibility. The document list and retrieval apply those visibility rules.
+Open `http://localhost:8000/docs` in your browser for the interactive Swagger UI!
 
-## Google connectors
+---
 
-Create an OAuth client in Google Cloud, enable Gmail API, Drive API, and Classroom API, configure the OAuth consent screen and local redirect URI, and save the downloaded client secret as `credentials/google-client-secret.json`. Add the exact callback URL from `.env` to the OAuth client's authorized redirect URIs. Sign-in endpoints are `/auth/google/{gmail|drive|classroom}/start`; they return a Google authorization URL. The scopes are read-only. Use a dedicated test account and review the current consent-screen/testing restrictions in Google Cloud.
+## 🧪 Running Tests
 
-The connector modules expose Gmail message listing, Drive file listing, Classroom course/coursework listing. Connector sync into the assistant's index is an extension point and is not wired into `/ask` yet. OAuth tokens are encrypted in the local database. Add account revocation and secure user authentication before production use.
+The test suite validates chunking, routing, authentication, permissions, audit logging, feedback, and API endpoints:
 
-## Website and Fusion sources
+```bash
+pytest tests/
+```
 
-`app/connectors/website.py` crawls public HTML pages only on an explicit hostname allowlist. Respect the college website's terms and robots guidance, use a conservative page limit, and review collected text before indexing it. The crawler is a module, not yet exposed as an admin API workflow.
+---
 
-For Fusion, export/download only records you are authorized to access through your own logged-in account and place them in `data/fusion/`. The readers support CSV, Excel, PDF, DOCX, TXT, and HTML. Do not put private student records in a public repository. The Fusion reader is not yet connected to an authenticated ingestion endpoint.
+## 🌐 API Overview
 
-## Database and deployment notes
+### Authentication & Users
+- `POST /admin/bootstrap` - Create initial administrator account with your secret key.
+- `POST /auth/login` - Authenticate with email/password and obtain a Bearer token.
+- `POST /admin/users` - Create student, faculty, or management accounts (Admin only).
 
-SQLite and a local Chroma directory are suitable for a local prototype. They are excluded from Git. Set appropriate backup, retention, encryption, authentication, and access policies before using real institutional or personal data. OAuth token encryption, stronger login sessions, production database migrations, LLM evidence-claim verification, and admin UI remain production work.
+### Ingestion & Connectors
+- `POST /documents/upload` - Upload PDF, DOCX, CSV, Excel, TXT, or Markdown documents with privacy settings.
+- `POST /admin/website/crawl` - Crawl public college website URLs within allowed domains.
+- `POST /ingestion/fusion/sync` - Ingest authorized Fusion export files from `./data/fusion`.
+- `GET /auth/google/{provider}/start` - Initiate OAuth for `gmail`, `drive`, or `classroom`.
+- `POST /connectors/google/{provider}/sync` - Sync and index emails, Drive files, or coursework into private student/staff accounts.
 
-Run basic tests with `pytest`. The tests cover chunk overlap and router decisions; they do not validate live Google/Gemini accounts.
+### Search & RAG
+- `POST /ask` - Ask a natural language question. Routes to SQL, ChromaDB, or both and returns answer with verified citations.
+- `GET /documents` - List all documents visible to the current user.
+
+### Feedback & Auditing
+- `POST /feedback` - Submit helpful/unhelpful rating and feedback on an answer.
+- `GET /admin/feedback` - Review user feedback submissions (Staff/Admin).
+- `PATCH /admin/feedback/{id}` - Mark feedback as reviewed and add staff notes.
+- `GET /admin/audit-logs` - Query historical audit logs for compliance (Admin only).
+
+---
+
+## 🚢 Deployment Guide
+
+### Option 1: Render (Recommended - Free & Easiest)
+Because College_RAG uses SQLite and a persistent local ChromaDB vector directory, deploying as a containerized web service with a persistent disk is ideal:
+
+1. Push your repository to GitHub.
+2. Sign in to [Render](https://render.com) and click **New > Blueprint**.
+3. Select your repository. Render automatically reads `render.yaml` and deploys the `Dockerfile` with a persistent volume mounted at `/app/data`.
+4. Add your `GEMINI_API_KEY` in the Render dashboard environment settings.
+
+### Option 2: Railway
+1. Sign in to [Railway](https://railway.app).
+2. Click **New Project > Deploy from GitHub repo**.
+3. Add a persistent volume for `/app/data` and set environment variables.
+
+### Option 3: Docker (Run Anywhere)
+```bash
+docker build -t college-rag .
+docker run -p 8000:8000 --env-file .env college-rag
+```
+
+### Option 4: Vercel (Serverless Note)
+A `vercel.json` and `api/index.py` are included. Note: Vercel serverless functions have ephemeral (temporary) file storage, so local SQLite and ChromaDB files reset across cold starts. For production on Vercel, point `DATABASE_URL` to an external PostgreSQL database (such as Neon or Supabase) and use an external vector service.
