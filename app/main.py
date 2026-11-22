@@ -1,4 +1,5 @@
 import secrets
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Request, UploadFile
@@ -27,11 +28,28 @@ from app.retrieval.vector import search as vector_search
 from app.security.access_control import can_upload, visible_document_ids
 from app.security.audit import record_audit
 from app.security.token_crypto import encrypt_token
+from app.services.fusion_watcher import fusion_watchdog
 from app.services.llm import answer
 from app.services.verification import verify_evidence
 
 Base.metadata.create_all(bind=engine)
-app = FastAPI(title=get_settings().app_name, version="0.2.0")
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Modern lifespan handler to start and gracefully stop the background Fusion watchdog."""
+    try:
+        fusion_watchdog.start()
+    except Exception:
+        pass
+    yield
+    try:
+        fusion_watchdog.stop()
+    except Exception:
+        pass
+
+
+app = FastAPI(title=get_settings().app_name, version="0.2.0", lifespan=lifespan)
 oauth_states: dict[str, tuple[str, int]] = {}
 
 
@@ -274,6 +292,71 @@ def sync_fusion(
         "status": "success",
         "synced_count": len(synced),
         "documents": [{"id": d.id, "title": d.title, "version": d.current_version} for d in synced],
+    }
+
+
+@app.post("/ingestion/fusion/upload", status_code=201)
+async def upload_fusion_file(
+    file: UploadFile = File(...),
+    visibility: str = Form("roles"),
+    roles: str = Form("student,faculty,management,admin"),
+    req: Request = None,
+    db: Session = Depends(get_db),
+    user: User = Depends(user_dependency),
+):
+    """Direct API upload endpoint for automated scripts and integration pipelines (Option 2)."""
+    if not can_upload(user):
+        raise HTTPException(403, "Faculty, management, or admin role required")
+    settings = get_settings()
+    fusion_dir = Path("./data/fusion").resolve()
+    fusion_dir.mkdir(parents=True, exist_ok=True)
+    name = Path(file.filename or "fusion_export").name
+    temp = fusion_dir / f"api_{secrets.token_hex(6)}_{name}"
+    size = 0
+
+    try:
+        with temp.open("wb") as out:
+            while data := await file.read(1024 * 1024):
+                size += len(data)
+                if size > settings.max_upload_mb * 1024 * 1024:
+                    raise HTTPException(413, "Upload exceeds configured size limit")
+                out.write(data)
+        try:
+            doc = ingest_file(
+                db,
+                temp,
+                title=f"Fusion: {name}",
+                source="fusion",
+                owner=user,
+                visibility=visibility,
+                allowed_roles=[r.strip() for r in roles.split(",") if r.strip()],
+                external_id=f"fusion:{name}",
+            )
+            ip_addr = req.client.host if (req and req.client) else ""
+            record_audit(
+                db,
+                action="UPLOAD_FUSION_API",
+                user_id=user.id,
+                details={"doc_id": doc.id, "title": doc.title, "size_bytes": size},
+                ip_address=ip_addr,
+            )
+            db.commit()
+            return {"id": doc.id, "title": doc.title, "version": doc.current_version, "status": "indexed"}
+        except ValueError as exc:
+            db.rollback()
+            raise HTTPException(415, str(exc)) from exc
+    finally:
+        temp.unlink(missing_ok=True)
+
+
+@app.get("/admin/watchdog/status")
+def watchdog_status(user: User = Depends(user_dependency)):
+    """Check background watchdog file watcher status."""
+    if user.role not in {"admin", "management"}:
+        raise HTTPException(403, "Admin or management role required")
+    return {
+        "watchdog_active": fusion_watchdog.is_running,
+        "watch_dir": str(fusion_watchdog.watch_dir),
     }
 
 
