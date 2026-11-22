@@ -38,7 +38,7 @@ def test_password_hashing_and_verification():
 
 
 def test_token_creation_and_decoding():
-    email = "student@college.edu"
+    email = "24bcs252@iiitdmj.ac.in"
     token = create_access_token(email)
     decoded = decode_access_token(token)
     assert decoded == email
@@ -58,8 +58,8 @@ def test_role_and_per_document_permissions():
     Base.metadata.create_all(test_engine)
 
     with Session(test_engine) as session:
-        student = User(email="student@college.edu", role="student")
-        faculty = User(email="prof@college.edu", role="faculty")
+        student = User(email="24bcs252@iiitdmj.ac.in", role="student")
+        faculty = User(email="prof@iiitdmj.ac.in", role="faculty")
         session.add_all([student, faculty])
         session.commit()
 
@@ -91,7 +91,7 @@ def test_audit_logging_and_feedback():
     Base.metadata.create_all(test_engine)
 
     with Session(test_engine) as session:
-        user = User(email="test@college.edu", role="student")
+        user = User(email="24bcs252@iiitdmj.ac.in", role="student")
         session.add(user)
         session.commit()
 

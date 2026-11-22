@@ -16,7 +16,8 @@ class Settings(BaseSettings):
     gemini_model: str = "gemini-2.5-flash"
     google_client_secrets_file: str = "./credentials/google-client-secret.json"
     google_redirect_uri: str = "http://localhost:8000/auth/google/callback"
-    website_allowed_domains: str = ""
+    website_allowed_domains: str = "iiitdmj.ac.in"
+    allowed_email_domain: str = "iiitdmj.ac.in"
     max_upload_mb: int = 25
 
 

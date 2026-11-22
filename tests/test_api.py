@@ -39,22 +39,23 @@ def test_health_check():
 
 
 def test_auth_and_audit_flow():
-    # 1. Bootstrap admin
+    # 1. Bootstrap admin with 24bcs252@iiitdmj.ac.in
     res = client.post(
         "/admin/bootstrap",
         data={
-            "email": "admin@college.edu",
+            "email": "24bcs252@iiitdmj.ac.in",
             "password": "AdminPassword123!",
             "key": "test-secret-key-for-unit-tests-12345678",
         },
     )
     assert res.status_code == 201
     assert res.json()["role"] == "admin"
+    assert res.json()["email"] == "24bcs252@iiitdmj.ac.in"
 
     # 2. Login as admin
     login_res = client.post(
         "/auth/login",
-        json={"email": "admin@college.edu", "password": "AdminPassword123!"},
+        json={"email": "24bcs252@iiitdmj.ac.in", "password": "AdminPassword123!"},
     )
     assert login_res.status_code == 200
     token = login_res.json()["access_token"]
@@ -62,15 +63,15 @@ def test_auth_and_audit_flow():
 
     headers = {"Authorization": f"Bearer {token}"}
 
-    # 3. Create a faculty user
+    # 3. Create an authorized iiitdmj user
     user_res = client.post(
         "/admin/users",
         headers=headers,
         data={
-            "email": "professor@college.edu",
+            "email": "professor@iiitdmj.ac.in",
             "password": "ProfPassword123!",
             "role": "faculty",
-            "display_name": "Prof. Smith",
+            "display_name": "Prof. Sharma",
         },
     )
     assert user_res.status_code == 201
@@ -84,11 +85,21 @@ def test_auth_and_audit_flow():
     assert "CREATE_USER" in actions
 
 
+def test_domain_restriction_enforced():
+    # Attempting to access or register with a non-iiitdmj.ac.in email must be rejected with 403
+    bad_login = client.post(
+        "/auth/login",
+        json={"email": "attacker@gmail.com", "password": "password"},
+    )
+    assert bad_login.status_code == 403
+    assert "iiitdmj.ac.in" in bad_login.json()["detail"]
+
+
 def test_feedback_flow():
-    # Submit feedback (Requirement 6)
+    # Submit feedback using iiitdmj account
     fb_res = client.post(
         "/feedback",
-        headers={"X-User-Email": "admin@college.edu"},
+        headers={"X-User-Email": "24bcs252@iiitdmj.ac.in"},
         json={
             "question": "What is the tuition deadline?",
             "answer": "The indexed sources do not contain enough information.",
@@ -100,14 +111,14 @@ def test_feedback_flow():
     fb_id = fb_res.json()["id"]
 
     # Review feedback by admin
-    admin_fb_res = client.get("/admin/feedback", headers={"X-User-Email": "admin@college.edu"})
+    admin_fb_res = client.get("/admin/feedback", headers={"X-User-Email": "24bcs252@iiitdmj.ac.in"})
     assert admin_fb_res.status_code == 200
     assert any(fb["id"] == fb_id for fb in admin_fb_res.json())
 
     # Update review notes
     patch_res = client.patch(
         f"/admin/feedback/{fb_id}",
-        headers={"X-User-Email": "admin@college.edu"},
+        headers={"X-User-Email": "24bcs252@iiitdmj.ac.in"},
         json={"reviewed": True, "reviewer_notes": "Added calendar to upload queue"},
     )
     assert patch_res.status_code == 200

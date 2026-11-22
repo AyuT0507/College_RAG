@@ -11,6 +11,7 @@ from app.auth.local_auth import (
     create_access_token,
     hash_password,
     resolve_user,
+    validate_domain,
     verify_password,
 )
 from app.config import get_settings
@@ -84,6 +85,7 @@ def health():
 @app.post("/auth/login")
 def login(request: LoginRequest, req: Request, db: Session = Depends(get_db)):
     """Authenticate user with email/password and issue a secure session token."""
+    validate_domain(request.email)
     user = db.scalar(select(User).where(User.email == request.email.strip().lower()))
     if not user or not user.is_active or not verify_password(request.password, user.password_hash):
         raise HTTPException(401, "Invalid email or password")
@@ -118,6 +120,7 @@ def create_user(
 ):
     if admin.role != "admin":
         raise HTTPException(403, "Admin role required")
+    validate_domain(email)
     if role not in {"student", "faculty", "management", "admin"}:
         raise HTTPException(400, "Invalid role")
     if db.scalar(select(User).where(User.email == email.lower())):
@@ -147,6 +150,7 @@ def bootstrap_admin(
     db: Session = Depends(get_db),
 ):
     settings = get_settings()
+    validate_domain(email)
     if settings.secret_key == "development-only-change-me" or not secrets.compare_digest(key, settings.secret_key):
         raise HTTPException(403, "Set a private SECRET_KEY in .env before bootstrap")
     if db.scalar(select(User).where(User.role == "admin")):
@@ -335,7 +339,10 @@ def google_start(provider: str, user: User = Depends(user_dependency)):
         flow = create_flow(provider)
         state = secrets.token_urlsafe(32)
         oauth_states[state] = (provider, user.id)
-        url, _ = flow.authorization_url(access_type="offline", include_granted_scopes="true", state=state, prompt="consent")
+        auth_kwargs = {"access_type": "offline", "include_granted_scopes": "true", "state": state, "prompt": "consent"}
+        if get_settings().allowed_email_domain:
+            auth_kwargs["hd"] = get_settings().allowed_email_domain
+        url, _ = flow.authorization_url(**auth_kwargs)
         return {"authorization_url": url, "state": state}
     except (ValueError, FileNotFoundError) as exc:
         raise HTTPException(400, str(exc)) from exc

@@ -63,6 +63,16 @@ def decode_access_token(token: str) -> str | None:
         return None
 
 
+def validate_domain(email: str) -> None:
+    """Strictly enforce institutional domain restrictions."""
+    settings = get_settings()
+    domain = settings.allowed_email_domain.strip().lower()
+    if domain:
+        norm_email = email.strip().lower()
+        if not norm_email.endswith(f"@{domain}"):
+            raise HTTPException(403, f"Strict institutional access: Only '@{domain}' accounts are authorized.")
+
+
 def resolve_user(session: Session, authorization: str | None = None, x_user_email: str | None = None) -> User:
     """
     Authenticate user using Bearer token or development X-User-Email header.
@@ -79,6 +89,7 @@ def resolve_user(session: Session, authorization: str | None = None, x_user_emai
     else:
         raise HTTPException(401, "Authentication required. Provide 'Authorization: Bearer <token>' or 'X-User-Email'")
 
+    validate_domain(email)
     user = session.scalar(select(User).where(User.email == email.lower()))
     if not user or not user.is_active:
         raise HTTPException(401, "Unknown or inactive user")
