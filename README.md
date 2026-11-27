@@ -132,6 +132,7 @@ pytest tests/
 - `POST /admin/website/crawl` - Crawl public institute pages (`https://www.iiitdmj.ac.in/`).
 - `POST /ingestion/fusion/upload` - Direct API upload endpoint for automated scripts.
 - `POST /ingestion/fusion/sync` - Ingest all files placed in `./data/fusion`.
+- `POST /connectors/fusion/sync` - Live Fusion API sync (profile, courses, notices, results) using short-lived in-memory token.
 - `GET /admin/watchdog/status` - Check background file monitor status.
 - `GET /auth/google/{provider}/start` - Initiate OAuth for `gmail`, `drive`, or `classroom`.
 - `POST /connectors/google/{provider}/sync` - Sync and index emails, Drive files, or coursework into private user accounts.

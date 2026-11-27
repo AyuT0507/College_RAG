@@ -45,3 +45,38 @@ def ingest_file(session: Session, path: Path, *, title: str, source: str, owner:
                                          data_json=json.dumps(row, ensure_ascii=False, default=str)))
     upsert_document(doc.id, owner_id, visibility, doc.allowed_roles, chunks(text))
     return doc
+
+
+def ingest_text(
+    session: Session,
+    text: str,
+    *,
+    title: str,
+    source: str,
+    owner: User | None,
+    external_id: str = "",
+    visibility: str = "private",
+    allowed_roles: list[str] | None = None,
+    source_url: str = "",
+    file_suffix: str = ".txt",
+) -> Document:
+    """Ingest adapter/client-provided text directly into the RAG pipeline."""
+    from tempfile import NamedTemporaryFile
+
+    with NamedTemporaryFile("w", encoding="utf-8", suffix=file_suffix, delete=False) as tmp:
+        tmp.write(text)
+        tmp_path = Path(tmp.name)
+    try:
+        return ingest_file(
+            session=session,
+            path=tmp_path,
+            title=title,
+            source=source,
+            owner=owner,
+            visibility=visibility,
+            allowed_roles=allowed_roles,
+            external_id=external_id,
+        )
+    finally:
+        tmp_path.unlink(missing_ok=True)
+

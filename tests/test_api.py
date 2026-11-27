@@ -123,3 +123,42 @@ def test_feedback_flow():
     )
     assert patch_res.status_code == 200
     assert patch_res.json()["reviewed"] is True
+
+
+def test_fusion_live_sync_flow():
+    from unittest.mock import MagicMock, patch
+    from app.connectors.fusion_client import FusionRecord
+
+    mock_client = MagicMock()
+    mock_client.fetch_records.return_value = (
+        [
+            FusionRecord(
+                category="profile",
+                title="Fusion profile",
+                external_id="profile",
+                text='{"name": "Ayush", "roll_no": "24BCS252", "programme": "B.Tech"}',
+                source_url="https://fusion.iiitdmj.ac.in/api/profile/",
+            ),
+            FusionRecord(
+                category="courses",
+                title="Current Fusion course registration",
+                external_id="courses:current",
+                text='{"courses": ["CS101", "MA101", "EC101"]}',
+                source_url="https://fusion.iiitdmj.ac.in/academic-procedures/api/stu/current_courseregistration",
+            ),
+        ],
+        {},
+    )
+
+    with patch("app.main.FusionClient", return_value=mock_client):
+        res = client.post(
+            "/connectors/fusion/sync",
+            headers={"X-User-Email": "24bcs252@iiitdmj.ac.in"},
+            data={"username": "24bcs252", "password": "SamplePassword123"},
+        )
+        assert res.status_code == 200
+        data = res.json()
+        assert data["status"] == "success"
+        assert data["indexed_count"] == 2
+        assert "profile" in data["categories"]
+        assert "courses" in data["categories"]

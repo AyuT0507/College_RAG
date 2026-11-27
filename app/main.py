@@ -17,10 +17,11 @@ from app.auth.local_auth import (
 )
 from app.config import get_settings
 from app.connectors.fusion import sync_fusion_directory
+from app.connectors.fusion_client import FusionAuthenticationError, FusionClient, FusionError
 from app.connectors.google_sync import sync_google_provider
 from app.connectors.website import crawl
 from app.database import Base, engine, get_db
-from app.ingestion.pipeline import ingest_file
+from app.ingestion.pipeline import ingest_file, ingest_text
 from app.models import AuditLog, Document, Feedback, OAuthCredential, User
 from app.retrieval.router import Route, route_query
 from app.retrieval.sql import search_documents, search_structured_records
@@ -478,6 +479,79 @@ def sync_google(
         }
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
+
+
+# ============================================================================
+# Fusion Live API Connector (Requirement 1)
+# ============================================================================
+
+@app.post("/connectors/fusion/sync")
+def sync_fusion_live(
+    username: str = Form(...),
+    password: str = Form(...),
+    req: Request = None,
+    db: Session = Depends(get_db),
+    user: User = Depends(user_dependency),
+):
+    """
+    User-triggered read-only live sync with Fusion (https://fusion.iiitdmj.ac.in).
+    Uses the official published Fusion frontend API client.
+    Fusion credentials and tokens are kept in memory for this request only and are NEVER persisted.
+    """
+    client = FusionClient()
+    try:
+        client.login(username, password)
+        records, errors = client.fetch_records()
+    except FusionAuthenticationError as exc:
+        raise HTTPException(401, str(exc)) from exc
+    except FusionError as exc:
+        raise HTTPException(502, str(exc)) from exc
+    finally:
+        client.close()
+
+    document_ids, failed = [], 0
+    for record in records:
+        try:
+            document = ingest_text(
+                db,
+                record.text,
+                title=record.title,
+                source="fusion_live",
+                owner=user,
+                external_id=record.external_id,
+                visibility="private",
+                source_url=record.source_url,
+            )
+            db.commit()
+            document_ids.append(document.id)
+        except Exception:
+            db.rollback()
+            failed += 1
+
+    ip_addr = req.client.host if (req and req.client) else ""
+    record_audit(
+        db,
+        action="SYNC_FUSION_LIVE",
+        user_id=user.id,
+        details={
+            "indexed_count": len(document_ids),
+            "failed": failed,
+            "categories": sorted({record.category for record in records}),
+            "unavailable": errors,
+        },
+        ip_address=ip_addr,
+    )
+    db.commit()
+
+    return {
+        "status": "success",
+        "indexed_count": len(document_ids),
+        "document_ids": document_ids,
+        "categories": sorted({record.category for record in records}),
+        "unavailable_categories": errors,
+        "failed": failed,
+        "credential_storage": "Fusion credentials and access token were kept in memory for this request only",
+    }
 
 
 # ============================================================================
